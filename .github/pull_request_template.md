@@ -1,12 +1,12 @@
-## What changed
+## What changed?
 
 <!-- One or two sentences. The diff shows what; this says why. -->
 
-## Why
+## Why?
 
 <!-- The reason the change exists. A reviewer cannot infer this from code. -->
 
-## How to verify
+## How to verify?
 
 <!-- What you ran, or what a reviewer should click, to see it working. -->
 
