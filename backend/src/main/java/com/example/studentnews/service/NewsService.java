@@ -23,7 +23,7 @@ public class NewsService {
     public List<NewsResponse> list(NewsStatus status) {
         List<NewsItem> items = status == null
                 ? newsRepository.findAll()
-                : newsRepository.findAllByStatusOrderByPublishedAtDesc(status);
+                : newsRepository.findAllByStatusOrderByUpdatedAtDesc(status);
 
         return items.stream()
                 .sorted(Comparator.comparing(NewsItem::getUpdatedAt).reversed())
