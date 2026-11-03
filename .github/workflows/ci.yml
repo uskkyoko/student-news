@@ -6,9 +6,15 @@ name: CI
 # longer still and lives in its own workflow.
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/task2-matrix-cache]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      fail_node20:
+        description: Intentionally fail Node 20 to demonstrate fail-fast false
+        type: boolean
+        default: false
 
 # A second push to the same branch cancels the run still in progress, so the
 # queue never fills with results nobody is waiting for any more.
@@ -72,15 +78,19 @@ jobs:
 
   # ---------------------------------------------------------------- stage 1
   frontend-build:
-    name: Frontend · build
+    name: Frontend · build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -92,12 +102,19 @@ jobs:
 
       - name: Build
         working-directory: frontend
-        run: npm run build
+        env:
+          FAIL_NODE20: ${{ inputs.fail_node20 && matrix.node == 20 }}
+        run: |
+          if [ "$FAIL_NODE20" = "true" ]; then
+            echo "Intentional Node 20 build failure for the fail-fast demonstration."
+            exit 1
+          fi
+          npm run build
 
       - name: Upload build output
         uses: actions/upload-artifact@v7
         with:
-          name: frontend-dist
+          name: frontend-dist-node${{ matrix.node }}
           path: frontend/dist/
           retention-days: 7
 
