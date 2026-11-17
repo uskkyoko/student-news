@@ -42,6 +42,26 @@ services:
     ports:
       - "8080:8080"
 
+  #new avatar service
+  avatar-service:
+    build:
+      context: ./avatar-service
+    environment:
+      PORT: "8090"
+      UPLOAD_DIR: /data/avatars
+      MAX_BYTES: "2097152"
+    ports:
+      - "8090:8090"
+    volumes:
+      - avatar_data:/data/avatars
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
   frontend:
     build:
       context: ./frontend
@@ -54,3 +74,4 @@ services:
 
 volumes:
   postgres_data:
+  avatar_data:
