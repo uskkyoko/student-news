@@ -1,0 +1,22 @@
+# Build output
+**/target/
+
+# Local uploads
+data/
+uploads/
+avatars/
+
+# IDE and editor files
+**/.idea/
+**/.vscode/
+**/*.iml
+**/.classpath
+**/.project
+**/.settings/
+**/*.swp
+**/*~
+
+# Logs and version control
+**/logs/
+**/*.log
+.git/
