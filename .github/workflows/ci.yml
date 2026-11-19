@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -38,24 +38,54 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+  # ---------------------------------------------------------------- stage 0
+  # Just as cheap: kubeconform compares every manifest in k8s/ with the
+  # official Kubernetes API schemas. No cluster is started. A misspelt field
+  # or a wrong indent fails here in seconds, not later at `kubectl apply`.
+  k8s-validate:
+    name: Kubernetes · validate manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+      # The Kubernetes version whose schemas the manifests are checked against.
+      KUBERNETES_VERSION: 1.37.0
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+
+      # -strict also rejects fields the schema does not know, which is what a
+      # typo such as `replicsa:` looks like.
+      - name: Validate manifests
+        run: kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" k8s/
+
+      # In a directory kubeconform reads .yaml, .yml and .json files only, so
+      # the example Secret (.yaml.example) is passed on standard input.
+      - name: Validate the example Secret
+        run: kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" - < k8s/01-secret.yaml.example
+
   # ---------------------------------------------------------------- stage 1
   backend-test:
     name: Backend · unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Set up JDK 21
+      - name: Set up JDK 27
         uses: actions/setup-java@v6
         with:
-          java-version: "21"
+          java-version: "27"
           distribution: temurin
           cache: maven # without this, Maven re-downloads the world every run
 
       # -B is batch mode (no colour codes in the log) and surefire runs the unit
       # tests only. The integration tests need a database, so they are excluded
-      # here and covered by the E2E workflow instead.
+      # here and run in the backend-integration-test job below.
       - name: Run unit tests
         working-directory: backend
         run: mvn -B test -Dtest='!*IntegrationTest,!*E2ETest'
@@ -71,6 +101,38 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------- stage 1
+  # The Testcontainers tests start a real PostgreSQL in Docker, which GitHub's
+  # Ubuntu runners provide. They take longer than the unit tests, so they get
+  # their own job and run alongside them rather than in front of them.
+  backend-integration-test:
+    name: Backend · integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 27
+        uses: actions/setup-java@v6
+        with:
+          java-version: "27"
+          distribution: temurin
+          cache: maven
+
+      # The mirror image of the unit-test filter: only the tests that need a
+      # database.
+      - name: Run integration tests
+        working-directory: backend
+        run: mvn -B test -Dtest='*IntegrationTest,*E2ETest'
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-integration-surefire-reports
+          path: backend/target/surefire-reports/
+          retention-days: 7
+
+  # ---------------------------------------------------------------- stage 1
   frontend-build:
     name: Frontend · build
     runs-on: ubuntu-latest
@@ -80,9 +142,9 @@ jobs:
       matrix:
         node: [20, 22]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -105,12 +167,19 @@ jobs:
           path: frontend/dist/
           retention-days: 7
 
-  # ---------------------------------------------------------------- stage 3
-  # Packaging only runs once lint, builds, and all tests are green. There is no point
+  # ---------------------------------------------------------------- stage 2
+  # Packaging only runs once every earlier job is green. There is no point
   # spending minutes building images for code whose tests already failed.
   package:
     name: Package · container images
-    needs: [frontend-lint, backend-test, frontend-build, integration-test]
+    needs:
+      [
+        frontend-lint,
+        k8s-validate,
+        backend-test,
+        backend-integration-test,
+        frontend-build,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -118,15 +187,15 @@ jobs:
       matrix:
         service: [backend, frontend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Built but not pushed: this proves the Dockerfile is valid on every change,
       # without needing registry credentials. Pushing is the Deploy stage, and that
       # is what the Final Project adds.
       - name: Build ${{ matrix.service }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ matrix.service }}
           push: false
@@ -141,7 +210,14 @@ jobs:
     name: CI status
     if: always()
     needs:
-      [frontend-lint, backend-test, frontend-build, integration-test, package]
+      [
+        frontend-lint,
+        k8s-validate,
+        backend-test,
+        backend-integration-test,
+        frontend-build,
+        package,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any stage failed
